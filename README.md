@@ -54,8 +54,41 @@ Example: `--delay-ms 32` with a 128-tap tail at 8 kHz needs ~384 taps.
 - `oslec_wrapper.py` – `ctypes` wrapper with helpers to convert PCM frames
 - `signal_generator.py` – synthetic speech, tones, and noise builders
 - `echo_simulator.py` – impulse-response modelling and noise injection
+- `scenarios.py` – declarative scenario definitions (stationary, time-variant,
+  double-talk, tone interference)
 - `analyzer.py` – ERLE, convergence, and power metrics
+- `benchmark.py` – batch comparison tooling with hyperparameter sweeps
 - `test_suite.py` – configurable scenarios + optional plotting frontend
+
+## Benchmark Results (3 s clip, 384 taps)
+We evaluated OSLEC against lighter-weight NLMS, IPNLMS, and MDF references
+across four scenarios. Figures are saved under `simulation/plots/`.
+
+![Mean ERLE summary](simulation/plots/benchmark_mean_erle.png)
+
+![Residual summary](simulation/plots/benchmark_residual_dbfs.png)
+
+Key takeaways:
+
+- **OSLEC** still delivers the highest steady-state ERLE, particularly for
+  stationary and time-varying echo paths, thanks to its dual-path update and
+  auxiliary NLP/CNG logic.
+- **IPNLMS** converges significantly faster and yields the lowest residual
+  noise in stationary conditions, but its mean ERLE trails OSLEC. It is a good
+  candidate when quick adaptation is more important than absolute suppression.
+- **NLMS** benefits from tuned step sizes (μ ≈ 0.8) yet remains a baseline
+  option for minimal complexity. MDF in its simplified form requires further
+  optimisation before it can compete.
+- **Tone interference** remains difficult for the lightweight algorithms; the
+  extra processing inside OSLEC keeps it marginally ahead.
+
+Regenerate the full benchmark (plots plus summary tables) with:
+```bash
+cd simulation
+source .venv/bin/activate
+BENCHMARK_PLOT_DIR=plots MPLBACKEND=Agg BENCHMARK_SAVE=1 \
+  python3 benchmark.py --duration 3 --taps 384
+```
 
 ## Next Steps
 - Add additional scenarios (fax tones, changing echo paths)
