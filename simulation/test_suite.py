@@ -3,20 +3,19 @@ from __future__ import annotations
 
 import argparse
 import logging
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass
 from typing import Optional
 
 import numpy as np
 
 from analyzer import SimulationMetrics, erle_db, summarize_metrics
-from echo_simulator import EchoPath, add_background_noise, prepare_double_talk
 from oslec_wrapper import (
     AdaptionMode,
     OSLEC,
     float_to_pcm16,
     pcm16_to_float,
 )
-from signal_generator import DoubleTalkConfig, speech_like_signal
+from scenarios import build_signals, list_scenarios
 
 
 LOG = logging.getLogger(__name__)
@@ -28,12 +27,20 @@ class SimulationConfig:
     duration_s: float = 6.0
     taps: int = 128
     adaption_mode: AdaptionMode = AdaptionMode.default()
+    scenario: str = "stationary"
     echo_delay_ms: float = 32.0
     echo_attenuation_db: float = 12.0
     echo_decay: float = 0.45
+    tail_taps: int = 128
+    variant_delay_ms: float = 48.0
+    variant_attenuation_db: float = 16.0
+    variant_decay: float = 0.35
+    near_level: float = 0.7
+    far_gain: float = 1.0
+    near_gain: float = 1.0
+    tone_digit: str = "5"
+    tone_level: float = 0.4
     noise_snr_db: float = 35.0
-    include_double_talk: bool = False
-    double_talk: DoubleTalkConfig = field(default_factory=DoubleTalkConfig)
     seed: Optional[int] = None
     window_size: int = 1024
     erle_threshold_db: float = 20.0
@@ -59,73 +66,21 @@ def _configure_logging(verbose: bool) -> None:
         LOG.debug("Verbose logging enabled")
 
 
-def _rng(seed: Optional[int]) -> np.random.Generator:
-    return np.random.default_rng(seed)
-
-
 def run_simulation(config: SimulationConfig) -> SimulationResult:
-    rng = _rng(config.seed)
-
     LOG.debug(
-        "Starting simulation: duration=%.2fs sr=%d taps=%d delay=%.1fms "
-        "atten=%.1fdB decay=%.2f noise_snr=%.1fdB double_talk=%s",
+        "Starting simulation: scenario=%s duration=%.2fs sr=%d taps=%d",
+        config.scenario,
         config.duration_s,
         config.sample_rate,
         config.taps,
-        config.echo_delay_ms,
-        config.echo_attenuation_db,
-        config.echo_decay,
-        config.noise_snr_db,
-        config.include_double_talk,
     )
 
-    tx_signal = speech_like_signal(
-        config.duration_s,
-        config.sample_rate,
-        amplitude=0.95,
-        rng=rng,
+    scenario_config = asdict(config)
+    tx_signal, microphone, metadata = build_signals(
+        config.scenario, {**scenario_config}
     )
-    echo_path = EchoPath(
-        delay_ms=config.echo_delay_ms,
-        attenuation_db=config.echo_attenuation_db,
-        sample_rate=config.sample_rate,
-        decay=config.echo_decay,
-    )
-    LOG.debug(
-        "Generated echo path (delay_samples=%d, tail_taps=%d)",
-        int(round(config.echo_delay_ms * config.sample_rate / 1000.0)),
-        echo_path.tail_taps,
-    )
-    echo_signal = np.convolve(
-        tx_signal,
-        echo_path.impulse_response(),
-        mode="full",
-    )[: len(tx_signal)]
-    microphone = echo_signal.copy()
+    LOG.debug("Scenario metadata: %s", metadata)
 
-    if config.include_double_talk:
-        near_end = speech_like_signal(
-            config.duration_s, config.sample_rate, amplitude=0.6, rng=rng
-        )
-        _, microphone = prepare_double_talk(
-            echo_signal,
-            near_end,
-            far_gain=config.double_talk.far_end_level,
-            near_gain=config.double_talk.near_end_level,
-        )
-        LOG.debug(
-            "Applied double-talk: near_end_level=%.2f far_end_level=%.2f",
-            config.double_talk.near_end_level,
-            config.double_talk.far_end_level,
-        )
-
-    microphone = add_background_noise(
-        microphone, config.noise_snr_db, rng=rng
-    )
-    LOG.debug(
-        "Added background noise: post_power=%.4e",
-        float(np.mean(microphone**2)),
-    )
     tx_signal = np.clip(tx_signal, -1.0, 0.999969482421875)
     microphone = np.clip(microphone, -1.0, 0.999969482421875)
 
@@ -247,14 +202,23 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run OSLEC echo cancellation simulations."
     )
+    scenario_names = sorted(list_scenarios().keys())
+    parser.add_argument("--scenario", choices=scenario_names, default="stationary")
     parser.add_argument("--duration", type=float, default=6.0)
     parser.add_argument("--sample-rate", type=int, default=8000)
     parser.add_argument("--taps", type=int, default=128)
     parser.add_argument("--delay-ms", type=float, default=32.0)
     parser.add_argument("--attenuation-db", type=float, default=12.0)
     parser.add_argument("--decay", type=float, default=0.45)
+    parser.add_argument("--variant-delay-ms", type=float, default=48.0)
+    parser.add_argument("--variant-attenuation-db", type=float, default=16.0)
+    parser.add_argument("--variant-decay", type=float, default=0.35)
     parser.add_argument("--noise-snr-db", type=float, default=35.0)
-    parser.add_argument("--double-talk", action="store_true")
+    parser.add_argument("--near-level", type=float, default=0.7)
+    parser.add_argument("--far-gain", type=float, default=1.0)
+    parser.add_argument("--near-gain", type=float, default=1.0)
+    parser.add_argument("--tone-digit", type=str, default="5")
+    parser.add_argument("--tone-level", type=float, default=0.4)
     parser.add_argument("--plot", action="store_true")
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument(
@@ -269,14 +233,22 @@ def main() -> None:
     args = parse_args()
     _configure_logging(args.verbose)
     config = SimulationConfig(
+        scenario=args.scenario,
         duration_s=args.duration,
         sample_rate=args.sample_rate,
         taps=args.taps,
         echo_delay_ms=args.delay_ms,
         echo_attenuation_db=args.attenuation_db,
         echo_decay=args.decay,
+        variant_delay_ms=args.variant_delay_ms,
+        variant_attenuation_db=args.variant_attenuation_db,
+        variant_decay=args.variant_decay,
+        near_level=args.near_level,
+        far_gain=args.far_gain,
+        near_gain=args.near_gain,
+        tone_digit=args.tone_digit,
+        tone_level=args.tone_level,
         noise_snr_db=args.noise_snr_db,
-        include_double_talk=args.double_talk,
         seed=args.seed,
     )
     result = run_simulation(config)

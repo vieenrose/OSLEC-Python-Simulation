@@ -9,6 +9,7 @@ from __future__ import annotations
 import ctypes
 import enum
 import logging
+import os
 from pathlib import Path
 from typing import Iterable, Optional, Sequence
 
@@ -45,6 +46,12 @@ class AdaptionMode(enum.IntFlag):
 
 
 def _default_library_path() -> Path:
+    env_path = os.environ.get("OSLEC_LIB")
+    if env_path:
+        candidate = Path(env_path).expanduser().resolve()
+        if candidate.exists():
+            return candidate
+
     candidate = Path(__file__).resolve().parent / "liboslec.so"
     if not candidate.exists():
         raise OSLECError(
