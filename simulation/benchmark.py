@@ -5,8 +5,9 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 from dataclasses import dataclass
-from typing import Callable, Dict, List
+from typing import Callable, Dict, List, Optional
 
 import numpy as np
 
@@ -103,6 +104,7 @@ def plot_results(
     tx: np.ndarray,
     mic: np.ndarray,
     threshold_db: float,
+    output_dir: Optional[str] = None,
 ) -> None:
     import matplotlib.pyplot as plt
 
@@ -141,7 +143,13 @@ def plot_results(
     axes[2].legend()
 
     fig.tight_layout(rect=[0, 0.03, 1, 0.95])
-    plt.show()
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+        path = os.path.join(output_dir, f"{scenario_key}.png")
+        fig.savefig(path, dpi=150)
+        plt.close(fig)
+    else:
+        plt.show()
 
 
 def run_benchmark(args: argparse.Namespace) -> None:
@@ -264,7 +272,9 @@ def run_benchmark(args: argparse.Namespace) -> None:
             f"{params_fragment}"
         )
 
-    if args.plot:
+    output_dir = os.environ.get("BENCHMARK_PLOT_DIR")
+
+    if args.plot or output_dir:
         for scenario_key in selected_scenarios:
             data = scenario_data.get(scenario_key)
             if not data or not data["entries"]:
@@ -277,6 +287,7 @@ def run_benchmark(args: argparse.Namespace) -> None:
                 data["tx"],
                 data["mic"],
                 args.threshold_db,
+                output_dir=output_dir,
             )
 
 
