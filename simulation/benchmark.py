@@ -21,7 +21,7 @@ from aec_algorithms import (
     OSLECWrapper,
 )
 from analyzer import erle_db, summarize_metrics
-from scenarios import build_signals, list_scenarios
+from scenarios import build_signals, list_scenarios, required_taps
 
 
 LOG = logging.getLogger(__name__)
@@ -190,6 +190,18 @@ def run_benchmark(args: argparse.Namespace) -> None:
                 "tone_level": args.tone_level,
             },
         )
+
+        tail_taps = args.tail_taps
+        delay_ms = args.delay_ms
+        needed = required_taps(args.sample_rate, delay_ms, tail_taps)
+        if args.taps < needed:
+            LOG.warning(
+                "Taps (%d) shorter than echo path (%d samples ≈ %.2f ms)."
+                " Consider increasing --taps or reducing delay/ tail length",
+                args.taps,
+                needed,
+                needed / args.sample_rate * 1000.0,
+            )
 
         scenario_entries: List[Dict] = []
 

@@ -15,7 +15,7 @@ from oslec_wrapper import (
     float_to_pcm16,
     pcm16_to_float,
 )
-from scenarios import build_signals, list_scenarios
+from scenarios import build_signals, list_scenarios, required_taps
 
 
 LOG = logging.getLogger(__name__)
@@ -80,6 +80,18 @@ def run_simulation(config: SimulationConfig) -> SimulationResult:
         config.scenario, {**scenario_config}
     )
     LOG.debug("Scenario metadata: %s", metadata)
+
+    needed = required_taps(
+        config.sample_rate, config.echo_delay_ms, config.tail_taps
+    )
+    if config.taps < needed:
+        LOG.warning(
+            "taps (%d) shorter than echo path (%d samples ≈ %.2f ms)."
+            " Increase --taps or reduce --delay-ms/--tail-taps",
+            config.taps,
+            needed,
+            needed / config.sample_rate * 1000.0,
+        )
 
     tx_signal = np.clip(tx_signal, -1.0, 0.999969482421875)
     microphone = np.clip(microphone, -1.0, 0.999969482421875)

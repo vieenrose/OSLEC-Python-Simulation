@@ -43,6 +43,11 @@ def _base_echo_path(config: Dict) -> EchoPath:
     )
 
 
+def required_taps(sample_rate: int, delay_ms: float, tail_taps: int) -> int:
+    delay_samples = int(round(sample_rate * delay_ms / 1000.0))
+    return delay_samples + tail_taps
+
+
 def stationary_echo(config: Dict) -> Tuple[np.ndarray, np.ndarray, Dict]:
     rng = _memoized_rng(config)
     tx = speech_like_signal(
