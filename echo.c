@@ -105,6 +105,7 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/slab.h>
+#include <linux/string.h>
 
 #include "echo.h"
 
@@ -206,14 +207,12 @@ static inline void lms_adapt_bg(struct oslec_state *ec, int clean, int shift)
 	offset2 = ec->curr_pos;
 	offset1 = ec->taps - offset2;
 
-	for (i = ec->taps - 1; i >= offset1; i--) {
-		exp = (ec->fir_state_bg.history[i - offset1] * factor);
-		ec->fir_taps16[1][i] += (int16_t) ((exp + (1 << 14)) >> 15);
-	}
-	for (; i >= 0; i--) {
-		exp = (ec->fir_state_bg.history[i + offset2] * factor);
-		ec->fir_taps16[1][i] += (int16_t) ((exp + (1 << 14)) >> 15);
-	}
+	oslec_update_segment(&ec->fir_taps16[1][offset1],
+			     &ec->fir_state_bg.history[0],
+			     ec->taps - offset1, factor);
+	oslec_update_segment(&ec->fir_taps16[1][0],
+			     &ec->fir_state_bg.history[offset2],
+			     offset2, factor);
 }
 #endif
 
@@ -672,3 +671,64 @@ MODULE_LICENSE("GPL");
 MODULE_AUTHOR("David Rowe");
 MODULE_DESCRIPTION("Open Source Line Echo Canceller");
 MODULE_VERSION("0.3.0");
+#if defined(__ARM_NEON__) && !defined(__KERNEL__)
+#include <arm_neon.h>
+#endif
+#if defined(__ARM_NEON__) && !defined(__KERNEL__)
+static inline void oslec_update_segment_neon(int16_t *dst,
+					     const int16_t *history,
+					     int len, int32_t factor)
+{
+	int i = 0;
+	const int32x4_t factor_vec = vdupq_n_s32(factor);
+	const int32x4_t round_vec = vdupq_n_s32(1 << 14);
+
+	for (; i + 7 < len; i += 8) {
+		int16x8_t h = vld1q_s16(history + i);
+		int16x8_t d = vld1q_s16(dst + i);
+
+		int32x4_t h_low = vmovl_s16(vget_low_s16(h));
+		int32x4_t h_high = vmovl_s16(vget_high_s16(h));
+		int32x4_t d_low = vmovl_s16(vget_low_s16(d));
+		int32x4_t d_high = vmovl_s16(vget_high_s16(d));
+
+		int32x4_t prod_low = vmulq_s32(h_low, factor_vec);
+		int32x4_t prod_high = vmulq_s32(h_high, factor_vec);
+
+		prod_low = vaddq_s32(prod_low, round_vec);
+		prod_high = vaddq_s32(prod_high, round_vec);
+
+		prod_low = vshrq_n_s32(prod_low, 15);
+		prod_high = vshrq_n_s32(prod_high, 15);
+
+		d_low = vaddq_s32(d_low, prod_low);
+		d_high = vaddq_s32(d_high, prod_high);
+
+		int16x4_t res_low = vqmovn_s32(d_low);
+		int16x4_t res_high = vqmovn_s32(d_high);
+		int16x8_t res = vcombine_s16(res_low, res_high);
+
+		vst1q_s16(dst + i, res);
+	}
+
+	for (; i < len; i++) {
+		int32_t exp = history[i] * factor;
+		dst[i] += (int16_t)((exp + (1 << 14)) >> 15);
+	}
+}
+#endif
+
+static inline void oslec_update_segment(int16_t *dst, const int16_t *history,
+					int len, int32_t factor)
+{
+#if defined(__ARM_NEON__) && !defined(__KERNEL__)
+	oslec_update_segment_neon(dst, history, len, factor);
+#else
+	int i;
+
+	for (i = 0; i < len; i++) {
+		int32_t exp = history[i] * factor;
+		dst[i] += (int16_t)((exp + (1 << 14)) >> 15);
+	}
+#endif
+}
