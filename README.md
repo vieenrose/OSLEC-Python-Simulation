@@ -91,6 +91,6 @@ BENCHMARK_PLOT_DIR=plots MPLBACKEND=Agg BENCHMARK_SAVE=1 \
 ```
 
 ## Next Steps
-- Add additional scenarios (fax tones, changing echo paths)
+- Extend the scenario suite with fax-tone stress tests and adaptive-tail sweeps
 - Integrate PESQ or POLQA tooling for perceptual quality scoring
-- Hook into automated sweeps for regression tracking
+- Hook benchmark automation into CI for regression tracking
